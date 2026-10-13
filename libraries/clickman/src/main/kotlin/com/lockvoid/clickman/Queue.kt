@@ -59,6 +59,7 @@ internal class Queue private constructor(connection: SQLiteConnection) : Closeab
             if (format > QueueSchema.FORMAT) {
                 throw ClickManException("${storage.path} is format $format, written by a newer ClickMan")
             }
+            if (format < 0) throw ClickManException("${storage.path} is format $format, which no ClickMan writes")
             if (format == 0L) create(db)
             db.exec("PRAGMA user_version = ${QueueSchema.FORMAT}")
         }

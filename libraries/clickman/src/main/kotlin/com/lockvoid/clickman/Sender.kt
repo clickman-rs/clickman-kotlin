@@ -4,6 +4,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URL
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -12,10 +13,12 @@ internal class Response(val status: Int, val retryAfter: Duration?, val detail: 
 
 /** POSTs gzipped batches to `{endpoint}/v1/batch` (docs/PROTOCOL.md, Endpoint). */
 internal class Sender(endpoint: String, private val writeKey: String) {
-    private val url = URI.create("${endpoint.trimEnd('/')}/v1/batch").toURL()
+    private val url = batchUrl(endpoint)
 
     init {
-        require(url.protocol == "http" || url.protocol == "https") { "the endpoint $endpoint is not an HTTP URL" }
+        require(writeKey.isNotEmpty() && writeKey.all { it.code in 33..126 }) {
+            "a public source write key without whitespace is required"
+        }
     }
 
     fun post(body: ByteArray): Response =
@@ -76,5 +79,15 @@ internal class Sender(endpoint: String, private val writeKey: String) {
     private companion object {
         const val TIMEOUT_MS = 30_000
         const val DETAIL_BYTES = 512
+
+        fun batchUrl(endpoint: String): URL {
+            val base = URI.create(endpoint)
+            require(
+                base.scheme?.lowercase() in setOf("http", "https") &&
+                    !base.host.isNullOrEmpty() && base.rawUserInfo == null &&
+                    base.rawQuery == null && base.rawFragment == null,
+            ) { "the endpoint must be an absolute HTTP(S) URL without credentials, query or fragment" }
+            return URI.create("${base.toASCIIString().trimEnd('/')}/v1/batch").toURL()
+        }
     }
 }

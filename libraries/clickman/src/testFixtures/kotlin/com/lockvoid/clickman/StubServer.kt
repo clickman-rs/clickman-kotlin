@@ -42,7 +42,7 @@ class StubServer private constructor(private val server: HttpServer) {
             val stub = StubServer(server)
             server.createContext("/") { exchange ->
                 val headers = exchange.requestHeaders.entries.associate { (name, values) -> name.lowercase() to values.first() }
-                stub.requests += Request(exchange.requestMethod, exchange.requestURI.path, headers, exchange.requestBody.readBytes())
+                stub.requests += Request(exchange.requestMethod, exchange.requestURI.rawPath, headers, exchange.requestBody.readBytes())
                 stub.retryAfter?.let { exchange.responseHeaders.add("Retry-After", it) }
                 stub.location?.let { exchange.responseHeaders.add("Location", it) }
                 val body = stub.answer.toByteArray()

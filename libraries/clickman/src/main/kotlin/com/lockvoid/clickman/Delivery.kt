@@ -36,7 +36,6 @@ internal class Delivery(
     /** True when a batch left the queue. */
     private fun sendNextBatch(force: Boolean): Boolean {
         val now = clock()
-        if (backingOff(now)) return false
         val events = take(now, force)
         return events.isNotEmpty() && send(events, now)
     }
@@ -48,7 +47,7 @@ internal class Delivery(
 
     private fun take(now: Long, force: Boolean): List<QueuedEvent> = queue.transaction { tx ->
         tx.purge(trackedBefore = now - MAX_AGE.inWholeMilliseconds)
-        if (force || due(tx.backlog(), now)) tx.oldest(Batch.MAX_EVENTS) else emptyList()
+        if (!backingOff(now) && (force || due(tx.backlog(), now))) tx.oldest(Batch.MAX_EVENTS) else emptyList()
     }
 
     private fun due(backlog: Backlog?, now: Long): Boolean =
@@ -73,9 +72,9 @@ internal class Delivery(
     }
 
     private fun retry(batch: List<QueuedEvent>, response: Response): Boolean {
-        val count = consecutiveFailures() + 1
+        val count = minOf(consecutiveFailures(), Int.MAX_VALUE - 1) + 1
         val delay = Backoff.delay(count, response.retryAfter, random)
-        failures = Failures.Consecutive(count, clock() + delay.inWholeMilliseconds)
+        failures = Failures.Consecutive(count, Backoff.deadline(clock(), delay))
         logger.warning("ClickMan retries ${batch.size} events in $delay: ${response.detail}")
         return false
     }

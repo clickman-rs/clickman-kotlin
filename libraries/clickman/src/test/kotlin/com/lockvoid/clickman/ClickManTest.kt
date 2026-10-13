@@ -318,4 +318,26 @@ class ClickManTest {
             assertFailsWith<IllegalArgumentException> { clickMan(configure = configure) }
         }
     }
+
+    @Test
+    fun aPollIntervalThatCannotBeScheduledIsRefusedBeforeOpeningStorage() {
+        for (interval in listOf(Duration.ZERO, (-1).seconds, Duration.INFINITE, 0.5.milliseconds)) {
+            assertFailsWith<IllegalArgumentException> { clickMan(pollInterval = interval) }
+            assertTrue(!storage.exists(), "an invalid poll interval created a queue")
+        }
+    }
+
+    @Test
+    fun cyclicPropertiesAreLoggedAndDoNotCrashTheHostOrStoreAnEvent() {
+        val clickMan = clickMan()
+        val cycle = mutableMapOf<String, Any?>()
+        cycle["self"] = cycle
+        val records = logged { clickMan.track("cyclic", cycle) }
+
+        assertEquals(0, clickMan.pendingEvents)
+        assertEquals(Level.SEVERE, records.single().level)
+        clickMan.track("valid")
+        clickMan.flush()
+        assertEquals(listOf("valid"), sent())
+    }
 }

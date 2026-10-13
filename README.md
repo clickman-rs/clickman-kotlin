@@ -82,9 +82,19 @@ Configure these values through `ClickMan.Configuration` or Android's `configure`
 callback. `flushInBackground()` requests an immediate send; `flush()` waits for
 the attempt and belongs off the UI thread. A failed send still observes its
 retry delay. Call `reset()` after sign-out to clear the current identity and traits.
+Flushes and scheduled sends remove events older than 30 days even while a longer
+retry delay is still waiting.
 
 Use the server's base URL as `endpoint`: the client appends `/v1/batch`. If the
 server is mounted at `/analytics`, use `https://example.com/analytics`.
+The endpoint must be an absolute HTTP(S) URL without credentials, query or
+fragment. Source keys must contain visible ASCII characters without whitespace.
+Configuration is checked before opening the queue; limits and intervals must be
+positive and finite. Keep a separate queue file for each endpoint and source key.
+
+Properties, traits and context reject cycles, non-finite numbers and nesting
+beyond 64 levels. Failed conversions are logged and do not store an event or
+replace existing traits/context.
 
 ## Develop and test
 

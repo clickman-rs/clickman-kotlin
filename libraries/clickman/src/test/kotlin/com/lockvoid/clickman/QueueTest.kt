@@ -79,6 +79,14 @@ class QueueTest {
     }
 
     @Test
+    fun aNegativeStoreFormatIsRefusedWithoutRewritingIt() {
+        inspect(file) { it.exec("PRAGMA user_version = -1") }
+        assertFailsWith<ClickManException> { openQueue(file) }
+        assertEquals(-1L, inspect(file) { it.long("PRAGMA user_version") })
+        assertEquals(emptyList(), tables(file))
+    }
+
+    @Test
     fun reopeningKeepsTheEventsAndTheIdentity() {
         openQueue(file).use { queue ->
             queue.transaction {

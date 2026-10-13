@@ -47,6 +47,24 @@ class SenderTest {
     }
 
     @Test
+    fun mountedAndEncodedEndpointPathsArePreserved() {
+        for (path in listOf("/analytics", "/analytics///", "/space%20here")) {
+            Sender("${server.endpoint}$path", "key").post(body)
+        }
+        assertEquals(listOf("/analytics/v1/batch", "/analytics/v1/batch", "/space%20here/v1/batch"), server.requests.map { it.path })
+    }
+
+    @Test
+    fun credentialsQueriesFragmentsAndInvalidWriteKeysAreRejectedAtStartup() {
+        for (endpoint in listOf("https://user:password@ingest.test", "https://ingest.test?other=1", "https://ingest.test#other")) {
+            assertFailsWith<IllegalArgumentException> { Sender(endpoint, "key") }
+        }
+        for (key in listOf("", " ", "key\nother", "non-ascii-é")) {
+            assertFailsWith<IllegalArgumentException> { Sender(server.endpoint, key) }
+        }
+    }
+
+    @Test
     fun theRetryAfterIsReadInSeconds() {
         server.status = 429
         server.retryAfter = "120"

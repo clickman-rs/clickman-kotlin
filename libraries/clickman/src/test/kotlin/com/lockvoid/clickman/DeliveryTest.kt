@@ -145,6 +145,31 @@ class DeliveryTest {
     }
 
     @Test
+    fun expiredEventsAreRemovedWhileRetryAfterIsStillWaiting() {
+        server.status = 429
+        server.retryAfter = (60 * 86400).toString()
+        track(1)
+        delivery.drain(force = true)
+        drainAfter(31.days)
+        assertEquals(1, server.requests.size, "expiry must not bypass Retry-After")
+        assertEquals(0, pending())
+    }
+
+    @Test
+    fun aLargeRetryAfterCannotOverflowIntoAnImmediateRetry() {
+        server.status = 429
+        server.retryAfter = Long.MAX_VALUE.toString()
+        track(1)
+
+        delivery.drain(force = true)
+        drainAfter(1.seconds)
+        drainAfter(1.seconds)
+
+        assertEquals(1, server.requests.size)
+        assertEquals(1, pending())
+    }
+
+    @Test
     fun aDeliveryStartsTheBackoffOver() {
         server.status = 503
         track(1)

@@ -16,4 +16,10 @@ internal object Backoff {
         val jittered = (doubled * random.nextDouble(0.8, 1.2)).seconds
         return maxOf(jittered, retryAfter ?: Duration.ZERO)
     }
+
+    /** A large server delay stays in the future rather than overflowing a Unix-millisecond timestamp. */
+    fun deadline(now: Long, delay: Duration): Long {
+        val millis = delay.inWholeMilliseconds.coerceAtLeast(0)
+        return if (now > Long.MAX_VALUE - millis) Long.MAX_VALUE else now + millis
+    }
 }

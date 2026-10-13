@@ -64,9 +64,10 @@ class ClickMan internal constructor(
         this(configuration, System::currentTimeMillis, SecureRandom().asKotlinRandom(), 5.seconds)
 
     init {
-        require(configuration.flushAt > 0 && configuration.maxQueue > 0 && configuration.flushInterval.isPositive()) {
-            "flushAt, maxQueue and flushInterval must be positive"
+        require(configuration.flushAt > 0 && configuration.maxQueue > 0 && configuration.flushInterval.isPositive() && configuration.flushInterval.isFinite()) {
+            "flushAt, maxQueue and flushInterval must be positive and finite"
         }
+        require(pollInterval.isFinite() && pollInterval.inWholeMilliseconds > 0) { "pollInterval must be finite and at least one millisecond" }
     }
 
     private val sender = Sender(configuration.endpoint, configuration.writeKey)
@@ -88,7 +89,7 @@ class ClickMan internal constructor(
 
     /** Makes the host's user id the actor of every event tracked from now on. */
     fun identify(externalId: String) {
-        attempt("identify ${JsonPrimitive(externalId)}") { tracker.identify(externalId) }
+        attempt("identify the actor") { tracker.identify(externalId) }
     }
 
     /**

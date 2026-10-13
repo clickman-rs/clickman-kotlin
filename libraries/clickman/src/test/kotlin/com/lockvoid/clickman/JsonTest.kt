@@ -49,4 +49,27 @@ class JsonTest {
             assertFailsWith<ClickManException>("$number") { mapOf("ratio" to listOf(number)).toJsonObject() }
         }
     }
+
+    @Test
+    fun prebuiltJsonValuesStillRejectNonFiniteNumbers() {
+        assertFailsWith<ClickManException> {
+            mapOf("ratio" to buildJsonObject { put("nested", JsonPrimitive(Double.NaN)) }).toJsonObject()
+        }
+    }
+
+    @Test
+    fun sharedContainersAreAllowedButCyclicContainersAreRefused() {
+        val shared = listOf("a", "b")
+        assertEquals("""{"first":["a","b"],"second":["a","b"]}""", mapOf("first" to shared, "second" to shared).toJsonObject().toString())
+        val cycle = mutableListOf<Any?>()
+        cycle.add(cycle)
+        assertFailsWith<ClickManException> { mapOf("cycle" to cycle).toJsonObject() }
+    }
+
+    @Test
+    fun excessiveNestingIsRefusedBeforeEncoding() {
+        var value: Any? = "leaf"
+        repeat(70) { value = mapOf("nested" to value) }
+        assertFailsWith<ClickManException> { mapOf("value" to value).toJsonObject() }
+    }
 }
