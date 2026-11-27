@@ -14,6 +14,10 @@ class StubServer private constructor(private val server: HttpServer) {
     class Request(val method: String, val path: String, val headers: Map<String, String>, val body: ByteArray) {
         val batch: JsonObject
             get() = Json.parseToJsonElement(GZIPInputStream(body.inputStream()).readBytes().decodeToString()).jsonObject
+
+        /** The body of an uncompressed request, such as a visitor link. */
+        val json: JsonObject
+            get() = Json.parseToJsonElement(body.decodeToString()).jsonObject
     }
 
     @Volatile var status = 202
@@ -29,8 +33,13 @@ class StubServer private constructor(private val server: HttpServer) {
     val endpoint: String
         get() = "http://127.0.0.1:${server.address.port}"
 
+    /** The events of every batch, in the order they arrived. */
     val events: List<JsonObject>
-        get() = requests.flatMap { request -> request.batch.getValue("batch").jsonArray.map { it.jsonObject } }
+        get() = requests.filter { it.path.endsWith("/v1/batch") }.flatMap { request -> request.batch.getValue("batch").jsonArray.map { it.jsonObject } }
+
+    /** The bodies of every visitor link, in the order they arrived. */
+    val links: List<JsonObject>
+        get() = requests.filter { it.path.endsWith("/v1/identify") }.map { it.json }
 
     fun stop() {
         server.stop(0)
@@ -46,8 +55,13 @@ class StubServer private constructor(private val server: HttpServer) {
                 stub.retryAfter?.let { exchange.responseHeaders.add("Retry-After", it) }
                 stub.location?.let { exchange.responseHeaders.add("Location", it) }
                 val body = stub.answer.toByteArray()
-                exchange.sendResponseHeaders(stub.status, body.size.toLong())
-                exchange.responseBody.use { it.write(body) }
+                if (stub.status == 204 || body.isEmpty()) {
+                    exchange.sendResponseHeaders(stub.status, -1)
+                    exchange.close()
+                } else {
+                    exchange.sendResponseHeaders(stub.status, body.size.toLong())
+                    exchange.responseBody.use { it.write(body) }
+                }
             }
             server.start()
             return stub

@@ -133,4 +133,54 @@ class TrackerTest {
 
         assertEquals(listOf("2", "3", "4"), queue.bodies().map { it.text("event") })
     }
+
+    @Test
+    fun aVisitorIsAnAnonymousUuidV4KeptAcrossLaunches() {
+        val file = File(directory, "visitor.sqlite")
+        val visitor = openQueue(file).use { store ->
+            Tracker(store, 10, { clock.millis }, Random(2)).identifyInstallation()
+            store.transaction { it.identity() }.externalId
+        }
+
+        val reopened = openQueue(file).use { store ->
+            Tracker(store, 10, { clock.millis }, Random(3)).identifyInstallation()
+            store.transaction { it.identity() }.externalId
+        }
+
+        assertEquals(visitor, reopened)
+        val uuid = UUID.fromString(visitor.removePrefix("anon:"))
+        assertEquals(listOf(true, 4, 2), listOf(visitor.startsWith("anon:"), uuid.version(), uuid.variant()))
+    }
+
+    @Test
+    fun aLinkIsStampedWithTheTimeOfItsIdentify() {
+        tracker.identifyInstallation()
+        clock.advance(60.seconds)
+        tracker.identify("user_42")
+
+        assertEquals(clock.millis, queue.transaction { it.backlog() }?.oldest)
+        assertEquals("identify", queue.bodies().single().text("type"))
+    }
+
+    @Test
+    fun linksCountAgainstTheQueueLimit() {
+        tracker.identifyInstallation()
+        tracker.track("1", none)
+        tracker.track("2", none)
+        tracker.identify("user_42")
+        tracker.track("3", none)
+
+        assertEquals(listOf("track", "identify", "track"), queue.bodies().map { it.text("type") })
+        assertEquals(listOf("2", null, "3"), queue.bodies().map { it.text("event") })
+    }
+
+    @Test
+    fun aVisitorIdIsRefusedAndTheActorKept() {
+        tracker.identify("42")
+
+        val error = assertFailsWith<ClickManException> { tracker.identify("anon:01926a2e-7b1c-4c3d-9f2e-5b1a2c3d4e5f") }
+
+        assertEquals(Validation.VISITOR_RULE, error.message)
+        assertEquals("42", queue.transaction { it.identity() }.externalId)
+    }
 }

@@ -25,6 +25,11 @@ internal class QueueTransaction(private val db: SQLiteConnection) {
         db.exec("UPDATE identity SET external_id = ? WHERE id = 1", listOf(externalId))
     }
 
+    /** Makes a store that tracks as `*` track as [visitor]; a visitor or an account stays the actor. */
+    fun startVisitor(visitor: String) {
+        db.exec("UPDATE identity SET external_id = ? WHERE id = 1 AND external_id = '*'", listOf(visitor))
+    }
+
     fun setTraits(traits: JsonObject) {
         db.exec("UPDATE identity SET traits = ? WHERE id = 1", listOf(traits.toString()))
     }
@@ -37,7 +42,7 @@ internal class QueueTransaction(private val db: SQLiteConnection) {
         db.exec("UPDATE identity SET external_id = '*', traits = '{}' WHERE id = 1")
     }
 
-    /** Queues [body] and drops the oldest events beyond [maxQueue]. */
+    /** Queues [body], an event or a link, and drops the oldest rows beyond [maxQueue]. */
     fun insert(createdAt: Long, body: String, maxQueue: Int) {
         db.exec("INSERT INTO events (created_at, body) VALUES (?, ?)", listOf(createdAt, body))
         db.exec(

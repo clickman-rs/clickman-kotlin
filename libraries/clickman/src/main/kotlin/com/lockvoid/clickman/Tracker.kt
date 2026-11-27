@@ -29,9 +29,24 @@ internal class Tracker(
         queue.transaction { it.insert(now, body(it.identity(), event, properties, now), maxQueue) }
     }
 
+    /** Makes [externalId] the actor; an account identified while a visitor is the actor is linked to it. */
     fun identify(externalId: String) {
         if (!Validation.isExternalId(externalId)) throw ClickManException(Validation.EXTERNAL_ID_RULE)
-        queue.transaction { it.setExternalId(externalId) }
+        if (Validation.isVisitor(externalId)) throw ClickManException(Validation.VISITOR_RULE)
+        val now = clock()
+        queue.transaction { tx ->
+            val actor = tx.identity().externalId
+            if (Validation.isVisitor(actor) && externalId != Validation.ANONYMOUS) {
+                tx.insert(now, Link.encode(anonymousId = actor, externalId = externalId), maxQueue)
+            }
+            tx.setExternalId(externalId)
+        }
+    }
+
+    /** Starts a new visitor `anon:<UUIDv4>` when the store tracks as `*`. */
+    fun identifyInstallation() {
+        val visitor = Validation.VISITOR_PREFIX + UUIDv4.generate(random)
+        queue.transaction { it.startVisitor(visitor) }
     }
 
     fun setTraits(changes: JsonObject) {

@@ -1,13 +1,22 @@
 package com.lockvoid.clickman
 
-/** The event names and external ids a client stores, counted in code points (events.json). */
+/** The event names and external ids a client stores, counted in code points (events.json, identity.json). */
 internal object Validation {
     const val EVENT_RULE = "an event name is 1 to 200 characters without control characters"
     const val EXTERNAL_ID_RULE = "an external id is 1 to 256 characters without control characters"
+    const val VISITOR_RULE = "a visitor id (anon:…) cannot be identified; identify the account instead"
+
+    /** The actor of a store nobody identified. */
+    const val ANONYMOUS = "*"
+
+    /** The prefix of the visitor ids `identifyInstallation` starts. */
+    const val VISITOR_PREFIX = "anon:"
 
     fun isEvent(name: String): Boolean = fits(name, 200)
 
     fun isExternalId(id: String): Boolean = fits(id, 256)
+
+    fun isVisitor(id: String): Boolean = id.startsWith(VISITOR_PREFIX)
 
     private fun fits(text: String, maxCodePoints: Int): Boolean =
         text.codePointCount(0, text.length) in 1..maxCodePoints && text.codePoints().noneMatch(::isControl)

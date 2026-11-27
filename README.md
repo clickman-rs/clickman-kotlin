@@ -96,6 +96,87 @@ Properties, traits and context reject cycles, non-finite numbers and nesting
 beyond 64 levels. Failed conversions are logged and do not store an event or
 replace existing traits/context.
 
+## Typed events and catalog
+
+Declare the app's events as a sealed hierarchy of `@Serializable` classes and
+objects; apply the `org.jetbrains.kotlin.plugin.serialization` Gradle plugin to
+the module that declares them. ClickMan derives each event's name, properties
+and catalog entry from the declaration:
+
+```kotlin
+import com.lockvoid.clickman.Description
+import com.lockvoid.clickman.FreeText
+import kotlinx.serialization.Serializable
+
+@Serializable
+sealed interface AppEvent {
+    @Serializable
+    @Description("Export wrote every file", "and they are ready to use.")
+    data class ExportCompleted(
+        @Description("File format of the export.") val format: Format,
+        @Description("How many tracks the export contains.") val tracks: Int,
+        @Description("Length of the exported audio in seconds.") val durationSeconds: Double? = null,
+        @Description("Title the user gave the export.") @FreeText val title: String? = null,
+    ) : AppEvent
+
+    @Serializable
+    @Description("A new empty project was created.")
+    data object ProjectCreated : AppEvent
+
+    enum class Format { WAV, FLAC }
+}
+
+analytics.track(AppEvent.ExportCompleted(AppEvent.Format.FLAC, tracks = 3))
+// Sends export_completed with {"format": "flac", "tracks": 3}.
+```
+
+- Class, property and enum entry names become snake case: `ExportCompleted`
+  is `export_completed`, `durationSeconds` is `duration_seconds` and
+  `PER_TRACK` or `PerTrack` is `per_track`. `@SerialName` renames one.
+- Every event and every property needs a `@Description`. Its strings are
+  trimmed and joined with single spaces.
+- Properties are `Boolean`, integers (`Int`, `Long`, `Short`, `Byte` and
+  their unsigned kinds), numbers (`Double`, `Float`), enums for a set of
+  values, and `String` marked `@FreeText`. Free text can carry personal data, so an unmarked `String` is
+  refused. A nullable property is optional and left out when null; any other
+  is required and always sent, a default value included.
+
+`ClickMan.catalog<AppEvent>()` returns the catalog JSON that the server stores
+for the source, for example from a test or a command-line entry point:
+
+```kotlin
+File("catalog.json").writeText(ClickMan.catalog<AppEvent>())
+```
+
+It throws `IllegalArgumentException` for a declaration the server would refuse,
+such as a missing description, an unmarked `String`, an unsupported property
+type or a standard event name like `app_opened`. Tracking such an event logs a
+severe error and queues nothing. `catalog(vararg)` accepts several hierarchies
+or single event classes and lists them in argument order; the classes of one
+sealed hierarchy follow kotlinx.serialization's order, sorted by qualified name.
+Java callers use `track(serializer, event)`.
+
+## Visitors
+
+Without an account, events carry the anonymous actor `*`. To count a
+signed-out user as one visitor and link their events to the account they sign
+in to, opt in with `identifyInstallation()`:
+
+```kotlin
+analytics.identifyInstallation() // Tracks as anon:<UUID>, kept across launches.
+analytics.track("project_opened")
+analytics.identify("user_42")    // Links the visitor to user_42, between its events.
+analytics.reset()                // After sign-out: tracks as "*" again.
+analytics.identifyInstallation() // Starts a new visitor for the next account.
+```
+
+`identifyInstallation()` does nothing while a visitor or an account is the
+actor. `identify` refuses visitor IDs (`anon:…`); switching from one account to
+another only changes the actor. Links wait in the queue with the events, are
+sent in order and uncompressed to `/v1/identify`, count toward `maxQueue` and
+expire after 30 days like events. A link the server answers with 422, a
+visitor already linked to another account, is dropped.
+
 ## Develop and test
 
 ```sh

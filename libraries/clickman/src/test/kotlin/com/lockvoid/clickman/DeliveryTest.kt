@@ -244,6 +244,68 @@ class DeliveryTest {
         assertEquals(listOf(2, 1), batchSizes())
     }
 
+    private fun link(externalId: String) {
+        queue.transaction { it.insert(clock.millis, Link.encode("anon:01926a2e-7b1c-4c3d-9f2e-5b1a2c3d4e5f", externalId), maxQueue = 10_000) }
+    }
+
+    private fun paths(): List<String> = server.requests.map { it.path }
+
+    @Test
+    fun aLinkIsSentAloneBetweenTheEventsAroundIt() {
+        track(2)
+        link("user_42")
+        track(1, first = 3)
+
+        delivery.drain(force = true)
+
+        assertEquals(listOf("/v1/batch", "/v1/identify", "/v1/batch"), paths())
+        assertEquals(listOf("e1", "e2", "e3"), server.events.map { it.text("event") })
+        assertEquals(listOf("user_42"), server.links.map { it.text("externalId") })
+        assertEquals(0, pending())
+    }
+
+    @Test
+    fun aLinkOfAVisitorLinkedToAnotherAccountIsDroppedWithAWarning() {
+        server.status = 422
+        server.answer = """{"error":"visitor_linked"}"""
+        link("user_42")
+
+        val records = logged { delivery.drain(force = true) }
+
+        assertEquals(0, pending())
+        val warning = records.single { it.level == Level.WARNING }
+        assertTrue(warning.message.contains("dropped a visitor link") && warning.message.contains("visitor_linked"), warning.message)
+    }
+
+    @Test
+    fun aFailedLinkStaysFirstAndBacksOff() {
+        server.status = 503
+        link("user_42")
+        track(1)
+
+        delivery.drain(force = true)
+        drainAfter(3_999.milliseconds)
+        assertEquals(listOf("/v1/identify"), paths())
+        server.status = 204
+        server.answer = ""
+        drainAfter(1.milliseconds)
+
+        assertEquals(listOf("/v1/identify", "/v1/identify", "/v1/batch"), paths())
+        assertEquals(0, pending())
+    }
+
+    @Test
+    fun aLinkOlderThanThirtyDaysIsDeletedUnsent() {
+        link("user_42")
+        clock.advance(30.days + 1.milliseconds)
+        track(1)
+
+        delivery.drain(force = true)
+
+        assertEquals(listOf("/v1/batch"), paths())
+        assertEquals(0, pending())
+    }
+
     @Test
     fun noAnswerIsARetryWithAWarning() {
         val port = ServerSocket(0).use { it.localPort }

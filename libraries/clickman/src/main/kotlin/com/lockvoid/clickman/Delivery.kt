@@ -5,10 +5,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 
 /**
- * Sends the queue one batch at a time. A batch is due at [flushAt] waiting
- * events, at an oldest event of [flushInterval] or when forced; after a
- * failure nothing is sent until its backoff has passed. Failures are counted
- * in memory. Runs on the client's single worker thread only.
+ * Sends the queue one take at a time: a batch of events or a visitor link. A take
+ * is due at [flushAt] waiting rows, at an oldest row of [flushInterval] or when
+ * forced; after a failure nothing is sent until its backoff has passed. Failures
+ * are counted in memory. Runs on the client's single worker thread only.
  */
 internal class Delivery(
     private val queue: Queue,
@@ -26,18 +26,21 @@ internal class Delivery(
 
     private var failures: Failures = Failures.None
 
-    /** Sends batches until nothing is due or a send fails. */
+    /** Sends takes until nothing is due or a send fails. */
     fun drain(force: Boolean) {
         while (true) {
-            if (!sendNextBatch(force)) return
+            if (!sendNextTake(force)) return
         }
     }
 
-    /** True when a batch left the queue. */
-    private fun sendNextBatch(force: Boolean): Boolean {
+    /** True when a take left the queue. */
+    private fun sendNextTake(force: Boolean): Boolean {
         val now = clock()
-        val events = take(now, force)
-        return events.isNotEmpty() && send(events, now)
+        return when (val take = take(now, force)) {
+            null -> false
+            is Take.Events -> send(take.rows, now)
+            is Take.Linked -> send(take)
+        }
     }
 
     private fun backingOff(now: Long): Boolean = when (val current = failures) {
@@ -45,37 +48,48 @@ internal class Delivery(
         is Failures.Consecutive -> now < current.nextAttemptAt
     }
 
-    private fun take(now: Long, force: Boolean): List<QueuedEvent> = queue.transaction { tx ->
+    private fun take(now: Long, force: Boolean): Take? = queue.transaction { tx ->
         tx.purge(trackedBefore = now - MAX_AGE.inWholeMilliseconds)
-        if (!backingOff(now) && (force || due(tx.backlog(), now))) tx.oldest(Batch.MAX_EVENTS) else emptyList()
+        if (!backingOff(now) && (force || due(tx.backlog(), now))) Take.of(tx.oldest(Batch.MAX_EVENTS)) else null
     }
 
     private fun due(backlog: Backlog?, now: Long): Boolean =
         backlog != null && (backlog.count >= flushAt || now - backlog.oldest >= flushInterval.inWholeMilliseconds)
 
-    private fun send(events: List<QueuedEvent>, now: Long): Boolean {
-        val batch = events.take(Batch.cut(events.map { it.body }, Batch.MAX_EVENTS, Batch.MAX_BYTES))
+    private fun send(batch: List<QueuedEvent>, now: Long): Boolean {
         val response = sender.post(Batch.encode(sentAt = now, batch.map { it.body }))
         return when (Outcome.of(response.status)) {
-            Outcome.DELIVERED -> settle(batch)
-            Outcome.REFUSED -> settle(batch).also {
+            Outcome.DELIVERED -> settle(batch.last())
+            Outcome.REFUSED -> settle(batch.last()).also {
                 logger.warning("ClickMan dropped ${batch.size} events the server refused: ${response.detail}")
             }
-            Outcome.RETRY -> retry(batch, response)
+            Outcome.RETRY -> retry("${batch.size} events", response)
         }
     }
 
-    private fun settle(batch: List<QueuedEvent>): Boolean {
-        queue.transaction { it.deleteThrough(batch.last().seq) }
+    private fun send(take: Take.Linked): Boolean {
+        val response = sender.postLink(Link.request(take.link))
+        return when (Outcome.ofLink(response.status)) {
+            Outcome.DELIVERED -> settle(take.row)
+            Outcome.REFUSED -> settle(take.row).also {
+                logger.warning("ClickMan dropped a visitor link the server refused: ${response.detail}")
+            }
+            Outcome.RETRY -> retry("a visitor link", response)
+        }
+    }
+
+    /** Removes a sent take, which ends with [last]. */
+    private fun settle(last: QueuedEvent): Boolean {
+        queue.transaction { it.deleteThrough(last.seq) }
         failures = Failures.None
         return true
     }
 
-    private fun retry(batch: List<QueuedEvent>, response: Response): Boolean {
+    private fun retry(what: String, response: Response): Boolean {
         val count = minOf(consecutiveFailures(), Int.MAX_VALUE - 1) + 1
         val delay = Backoff.delay(count, response.retryAfter, random)
         failures = Failures.Consecutive(count, Backoff.deadline(clock(), delay))
-        logger.warning("ClickMan retries ${batch.size} events in $delay: ${response.detail}")
+        logger.warning("ClickMan retries $what in $delay: ${response.detail}")
         return false
     }
 

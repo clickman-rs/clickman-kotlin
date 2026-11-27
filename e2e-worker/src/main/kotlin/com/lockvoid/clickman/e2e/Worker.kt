@@ -53,6 +53,7 @@ private fun answer(clickMan: ClickMan, line: String): JsonObject =
 private fun perform(clickMan: ClickMan, input: JsonObject): JsonObject =
     when (val command = input.text("command")) {
         "identify" -> done { clickMan.identify(input.text("externalId")) }
+        "identifyInstallation" -> done { clickMan.identifyInstallation() }
         "traits" -> done { clickMan.setTraits(input.getValue("traits").jsonObject) }
         "track" -> done { clickMan.track(input.text("event"), input["properties"]?.jsonObject ?: JsonObject(emptyMap())) }
         "reset" -> done { clickMan.reset() }

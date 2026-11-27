@@ -328,6 +328,98 @@ class ClickManTest {
     }
 
     @Test
+    fun aDeclaredEventIsSentWithItsSnakeCaseNameAndProperties() {
+        val clickMan = clickMan()
+
+        clickMan.track(ReferenceEvent.ExportCompleted(ReferenceEvent.Format.FLAC, ReferenceEvent.Mode.PER_TRACK, tracks = 3, durationSeconds = 12.5))
+        val created: ReferenceEvent = ReferenceEvent.ProjectCreated
+        clickMan.track(created)
+        clickMan.track(ReferenceEvent.serializer(), ReferenceEvent.ExportCompleted(ReferenceEvent.Format.WAV, ReferenceEvent.Mode.FULL_MIX, tracks = 1))
+        clickMan.flush()
+
+        assertEquals(listOf("export_completed", "project_created", "export_completed"), sent())
+        assertEquals(
+            listOf(
+                buildJsonObject { put("format", "flac"); put("mode", "per_track"); put("tracks", 3); put("duration_seconds", 12.5) },
+                buildJsonObject { },
+                buildJsonObject { put("format", "wav"); put("mode", "full_mix"); put("tracks", 1) },
+            ),
+            server.events.map { it.child("properties") },
+        )
+    }
+
+    @Test
+    fun aDeclarationTheCatalogRefusesIsLoggedAsSevereAndNotStored() {
+        val clickMan = clickMan()
+
+        val records = logged {
+            clickMan.track(CatalogTest.UndeclaredText("Ada"))
+            clickMan.track(CatalogTest.Undescribed(1))
+            clickMan.track(mapOf("not" to "an event"))
+            clickMan.track(ReferenceEvent.ExportCompleted(ReferenceEvent.Format.WAV, ReferenceEvent.Mode.FULL_MIX, 1, Double.POSITIVE_INFINITY))
+        }
+
+        assertEquals(listOf(Level.SEVERE, Level.SEVERE, Level.SEVERE, Level.SEVERE), records.map { it.level })
+        assertTrue(records[0].thrown?.message.orEmpty().contains("without @FreeText"), records[0].thrown?.message)
+        assertEquals(0, clickMan.pendingEvents)
+    }
+
+    @Test
+    fun aVisitorsEventsAreLinkedToTheAccountItBecomes() {
+        server.answer = ""
+        val clickMan = clickMan()
+
+        clickMan.identifyInstallation()
+        clickMan.track("project_opened")
+        clickMan.identify("user_42")
+        clickMan.track("export_completed")
+        clickMan.flush()
+
+        assertEquals(listOf("/v1/batch", "/v1/identify", "/v1/batch"), server.requests.map { it.path })
+        val visitor = server.events.first().text("externalId").orEmpty()
+        assertTrue(visitor.startsWith("anon:"), visitor)
+        assertEquals(listOf(buildJsonObject { put("anonymousId", visitor); put("externalId", "user_42") }), server.links)
+        assertEquals("user_42", server.events.last().text("externalId"))
+        assertEquals(0, clickMan.pendingEvents)
+    }
+
+    @Test
+    fun aVisitorIsKeptAcrossLaunchesAndAResetStartsAnother() {
+        val first = clickMan().run {
+            identifyInstallation()
+            track("a")
+            close()
+            identityOf(storage)
+        }
+        val clickMan = clickMan()
+        clickMan.identifyInstallation()
+        clickMan.track("b")
+        clickMan.reset()
+        clickMan.track("c")
+        clickMan.identifyInstallation()
+        clickMan.track("d")
+        clickMan.flush()
+
+        val (a, b, c, d) = server.events.map { it.text("externalId") }
+        assertEquals(listOf(first, first, "*"), listOf(a, b, c))
+        assertTrue(d.orEmpty().startsWith("anon:") && d != first, "$d after $first")
+    }
+
+    @Test
+    fun aVisitorIdCannotBeIdentified() {
+        val clickMan = clickMan()
+
+        val records = logged { clickMan.identify("anon:01926a2e-7b1c-4c3d-9f2e-5b1a2c3d4e5f") }
+        clickMan.track("still_anonymous")
+        clickMan.flush()
+
+        assertTrue(records.single().message.contains(Validation.VISITOR_RULE), records.single().message)
+        assertEquals("*", server.events.single().text("externalId"))
+    }
+
+    private fun identityOf(file: File): String = inspect(file) { db -> db.single("SELECT external_id FROM identity") { it.getText(0) } }
+
+    @Test
     fun cyclicPropertiesAreLoggedAndDoNotCrashTheHostOrStoreAnEvent() {
         val clickMan = clickMan()
         val cycle = mutableMapOf<String, Any?>()

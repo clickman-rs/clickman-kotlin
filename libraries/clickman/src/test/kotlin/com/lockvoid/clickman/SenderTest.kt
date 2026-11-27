@@ -40,6 +40,23 @@ class SenderTest {
     }
 
     @Test
+    fun aLinkIsPostedUncompressedToTheIdentifyPathOfTheMountedEndpoint() {
+        val link = """{"anonymousId":"anon:01926a2e-7b1c-4c3d-9f2e-5b1a2c3d4e5f","externalId":"user_42"}""".encodeToByteArray()
+        server.status = 204
+        server.answer = ""
+
+        val response = Sender("${server.endpoint}/analytics/", "android-key").postLink(link)
+
+        val request = server.requests.single()
+        assertEquals(204, response.status)
+        assertEquals("/analytics/v1/identify", request.path)
+        assertEquals("Bearer android-key", request.headers["authorization"])
+        assertEquals("application/json", request.headers["content-type"])
+        assertNull(request.headers["content-encoding"])
+        assertContentEquals(link, request.body)
+    }
+
+    @Test
     fun anEndpointEndingInASlashStillPostsToTheBatchPath() {
         Sender("${server.endpoint}/", "key").post(body)
 

@@ -13,7 +13,9 @@ import kotlin.random.Random
 import kotlin.random.asKotlinRandom
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.serializer
 
 /** A store ClickMan refuses to open, such as one written by a newer ClickMan. */
 class ClickManException(message: String) : Exception(message)
@@ -87,9 +89,45 @@ class ClickMan internal constructor(
         attempt("track ${JsonPrimitive(event)}") { tracker.track(event, properties.toJsonObject()) }
     }
 
-    /** Makes the host's user id the actor of every event tracked from now on. */
+    /**
+     * Queues [event], an instance of a declared event class (see [catalog]): the event is
+     * the snake case of its class name and the properties those of the class, an optional
+     * one left out when null. A declaration the catalog would refuse is logged and not queued.
+     */
+    inline fun <reified E : Any> track(event: E) {
+        trackDeclared({ serializer<E>() }, event)
+    }
+
+    /** Queues [event] of a declared event class written by [serializer]; see the reified `track(event)`. */
+    fun <E> track(serializer: SerializationStrategy<E>, event: E) {
+        trackDeclared({ serializer }, event)
+    }
+
+    @PublishedApi
+    internal fun <E> trackDeclared(serializer: () -> SerializationStrategy<E>, event: E) {
+        attempt("track a declared event") {
+            val typed = TypedEvent.of(serializer(), event)
+            tracker.track(typed.name, typed.properties)
+        }
+    }
+
+    /**
+     * Makes the host's account id the actor of every event tracked from now on. While a
+     * visitor of [identifyInstallation] is the actor, an account id also queues a link of
+     * the visitor to the account, so its earlier events count for the account. A visitor id
+     * (`anon:…`) is refused with a logged error.
+     */
     fun identify(externalId: String) {
         attempt("identify the actor") { tracker.identify(externalId) }
+    }
+
+    /**
+     * Makes a store nobody identified track as a new anonymous visitor, `anon:<UUID>`, kept
+     * across launches. Does nothing while a visitor or an account is the actor; after [reset]
+     * it starts another visitor, so one visitor never links to two accounts.
+     */
+    fun identifyInstallation() {
+        attempt("identify the installation") { tracker.identifyInstallation() }
     }
 
     /**
@@ -101,7 +139,10 @@ class ClickMan internal constructor(
         attempt("set the traits") { tracker.setTraits(traits.toJsonObject()) }
     }
 
-    /** Makes events tracked from now on anonymous and forgets the traits, e.g. after signing out. */
+    /**
+     * Makes events tracked from now on anonymous (`*`) and forgets the traits, e.g. after
+     * signing out; call [identifyInstallation] after it to track as a new visitor.
+     */
     fun reset() {
         attempt("reset") { tracker.reset() }
     }
@@ -141,7 +182,7 @@ class ClickMan internal constructor(
         }
     }
 
-    /** Events on the device, waiting or in flight; 0, with the failure logged, when they cannot be counted. */
+    /** Events and visitor links on the device, waiting or in flight; 0, with the failure logged, when they cannot be counted. */
     val pendingEvents: Int
         get() = try {
             queue.transaction { it.count() }
@@ -193,6 +234,22 @@ class ClickMan internal constructor(
 
     companion object {
         const val VERSION = "0.1.0"
+
+        /**
+         * The catalog of the declared events as JSON (docs/PROTOCOL.md, Event catalog), for
+         * saving with the source. Pass sealed hierarchies such as `AppEvent.serializer()` or
+         * single event classes: `@Serializable` classes and objects with a [Description] whose
+         * properties, each with a [Description], are booleans, integers, floating-point numbers,
+         * enums or [FreeText] strings; a nullable property is optional. Events appear in the
+         * order of the arguments, the classes of one hierarchy in kotlinx.serialization's order,
+         * sorted by qualified name. Throws [IllegalArgumentException] for a declaration the
+         * server would refuse, such as a missing description or a `String` without [FreeText].
+         */
+        @JvmStatic
+        fun catalog(vararg events: SerializationStrategy<*>): String = Catalog.json(events.toList())
+
+        /** The catalog of the events of [E], usually a sealed hierarchy; see `catalog(vararg events)`. */
+        inline fun <reified E : Any> catalog(): String = catalog(serializer<E>())
 
         private const val CLOSE_TIMEOUT_SECONDS = 5L
     }
